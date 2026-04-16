@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>nao_robot_bringup</name>
+  <version>0.1.0</version>
+  <description>Launch files for the DS-Visualizer NAO robot environment.</description>
+  <maintainer email="d.mora@uniandes.edu.co">David Mora</maintainer>
+  <license>Academic</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>nao_ds_bridge</exec_depend>
+  <exec_depend>nao_pedagogical_planner</exec_depend>
+  <exec_depend>nao_behavior_renderer</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
+

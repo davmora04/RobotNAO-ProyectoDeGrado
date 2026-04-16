@@ -1,0 +1,37 @@
+{
+  "session_id": "demo-session",
+  "tipo_estructura": "lista_enlazada",
+  "operacion_ejecutada": "add_first",
+  "validation_result": {
+    "estado": "CONCEPT_ERROR",
+    "score": 50,
+    "errores_detectados": [
+      {
+        "tipo": "invariante_clp",
+        "invariante": "size_matches_actual",
+        "detalle": "size=5 pero el conteo real es 4"
+      }
+    ]
+  },
+  "feedback": {
+    "preguntas": [
+      {
+        "orden": 1,
+        "categoria": "reconocimiento",
+        "pregunta": "Despues de add_first, que nodo deberia quedar como first y que valor deberia tener size?"
+      },
+      {
+        "orden": 2,
+        "categoria": "contraste",
+        "pregunta": "Que diferencia ves entre el size reportado y el numero real de nodos alcanzables?"
+      }
+    ],
+    "pistas": [
+      "Revisa cuando se actualiza size.",
+      "Compara el recorrido desde first con el contador declarado."
+    ],
+    "resumen_error": "La lista reporta un tamano distinto al numero real de nodos.",
+    "concepto_clave": "Consistencia entre size y nodos alcanzables"
+  }
+}
+

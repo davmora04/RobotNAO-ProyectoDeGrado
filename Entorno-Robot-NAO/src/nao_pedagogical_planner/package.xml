@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>nao_pedagogical_planner</name>
+  <version>0.1.0</version>
+  <description>Maps pedagogical validation feedback into NAO behavior plans.</description>
+  <maintainer email="d.mora@uniandes.edu.co">David Mora</maintainer>
+  <license>Academic</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
+
