@@ -41,8 +41,7 @@ def generate_launch_description():
                 executable="behavior_renderer_node",
                 name="nao_behavior_renderer",
                 output="screen",
-                parameters=[{"mock_mode": mock_mode}],
+                parameters=[{"mock_mode": mock_mode, "listen_legacy_plan": False}],
             ),
         ]
     )
-
