@@ -35,6 +35,7 @@ def generate_launch_description():
                 executable="pedagogical_planner_node",
                 name="nao_pedagogical_planner",
                 output="screen",
+                parameters=[{"compact_speech": False}],
             ),
             Node(
                 package="nao_behavior_renderer",

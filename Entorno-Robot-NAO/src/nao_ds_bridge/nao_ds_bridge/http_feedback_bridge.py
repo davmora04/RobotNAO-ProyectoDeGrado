@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -181,11 +182,15 @@ class HttpFeedbackBridgeNode(Node):
         self.declare_parameter("port", default_port)
         self.declare_parameter("event_topic", "/ds_visualizer/feedback_event")
         self.declare_parameter("state_topic", "/interaction/state")
+        self.declare_parameter("duplicate_window_sec", 10.0)
 
         self.host = self.get_parameter("host").get_parameter_value().string_value
         self.port = int(self.get_parameter("port").value)
         self.event_topic = self.get_parameter("event_topic").get_parameter_value().string_value
         self.state_topic = self.get_parameter("state_topic").get_parameter_value().string_value
+        self.duplicate_window_sec = float(self.get_parameter("duplicate_window_sec").value)
+        self._last_event_signature = ""
+        self._last_event_time = 0.0
 
         self.pub_event = self.create_publisher(String, self.event_topic, 10)
         self.pub_state = self.create_publisher(String, self.state_topic, 10)
@@ -200,12 +205,50 @@ class HttpFeedbackBridgeNode(Node):
         )
 
     def publish_event(self, event: Dict[str, Any]) -> None:
+        signature = self._event_signature(event)
+        now = time.monotonic()
+        if (
+            signature == self._last_event_signature
+            and now - self._last_event_time < self.duplicate_window_sec
+        ):
+            self.get_logger().warning(
+                f"Ignored duplicate event state={event['validation_state']} "
+                f"operation={event['operation']} window={self.duplicate_window_sec:.1f}s"
+            )
+            return
+
+        self._last_event_signature = signature
+        self._last_event_time = now
+
         msg = String()
         msg.data = json.dumps(event, ensure_ascii=False)
         self.pub_event.publish(msg)
         self.pub_state.publish(String(data="ROBOT_EVENT_RECEIVED"))
         self.get_logger().info(
             f"Published event {event['event_id']} state={event['validation_state']} structure={event['structure_type']}"
+        )
+
+    def _event_signature(self, event: Dict[str, Any]) -> str:
+        feedback = _as_dict(event.get("feedback"))
+        questions = feedback.get("preguntas") or feedback.get("secuencia_preguntas") or []
+        first_question = ""
+        if isinstance(questions, list) and questions:
+            question = questions[0]
+            if isinstance(question, dict):
+                first_question = str(question.get("pregunta") or question.get("texto") or question.get("question") or "")
+            else:
+                first_question = str(question)
+
+        return json.dumps(
+            {
+                "session_id": event.get("session_id", ""),
+                "structure_type": event.get("structure_type", ""),
+                "operation": event.get("operation", ""),
+                "validation_state": event.get("validation_state", ""),
+                "question": first_question,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
         )
 
     def destroy_node(self) -> bool:
@@ -228,4 +271,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -249,12 +249,13 @@ class BehaviorRendererNode(Node):
             self.get_logger().info(f"[MOCK] SAY lang={language} animated={animated}: {text}")
             time.sleep(min(3.0, max(0.8, len(text) / 22.0)))
             return
+        self.get_logger().info(f"[ROBOT_SAY] lang={language} animated={animated}: {text}")
         req = Say.Request()
         req.text = text
         req.language = self._normalize_language(language)
         req.animated = animated
         req.asynchronous = False
-        self._call_service(self.cli_say, req, f"SAY '{self._short(text)}'")
+        self._call_service(self.cli_say, req, "SAY")
 
     def _set_leds(self, name: str, color: Any, duration: float) -> None:
         r, g, b = self._parse_color(color)
@@ -374,6 +375,9 @@ class BehaviorRendererNode(Node):
 
     def _short(self, text: str, limit: int = 70) -> str:
         return text if len(text) <= limit else text[: limit - 3] + "..."
+
+    def _speech_duration(self, text: str) -> float:
+        return min(8.0, max(1.2, len(text) / 18.0))
 
 
 def main() -> None:

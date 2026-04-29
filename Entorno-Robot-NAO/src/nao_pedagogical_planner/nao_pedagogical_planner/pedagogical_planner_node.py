@@ -84,6 +84,7 @@ class PedagogicalPlannerNode(Node):
         self.declare_parameter("max_question_chars", 180)
         self.declare_parameter("max_intro_chars", 170)
         self.declare_parameter("student_pause_sec", 1.2)
+        self.declare_parameter("compact_speech", False)
 
         self.event_topic = self.get_parameter("event_topic").get_parameter_value().string_value
         self.plan_topic = self.get_parameter("plan_topic").get_parameter_value().string_value
@@ -92,6 +93,7 @@ class PedagogicalPlannerNode(Node):
         self.max_question_chars = int(self.get_parameter("max_question_chars").value)
         self.max_intro_chars = int(self.get_parameter("max_intro_chars").value)
         self.student_pause_sec = float(self.get_parameter("student_pause_sec").value)
+        self.compact_speech = bool(self.get_parameter("compact_speech").value)
 
         self.create_subscription(String, self.event_topic, self._on_event, 10)
         self.pub_plan = self.create_publisher(String, self.plan_topic, 10)
@@ -126,6 +128,10 @@ class PedagogicalPlannerNode(Node):
         feedback = _as_dict(event.get("feedback"))
         questions = _as_list(feedback.get("preguntas") or feedback.get("secuencia_preguntas"))
         question = _question_text(questions[0]) if questions else self._fallback_question(event)
+        question_texts = [_clean_sentence(_question_text(item), self.max_question_chars) for item in questions]
+        question_texts = [text for text in question_texts if text]
+        if not question_texts:
+            question_texts = [_clean_sentence(question, self.max_question_chars)]
         concept = str(feedback.get("concepto_clave") or self._concept_from_validation(event))
 
         intro = _clean_sentence(cfg["intro"], self.max_intro_chars)
@@ -137,7 +143,13 @@ class PedagogicalPlannerNode(Node):
             {"type": "go_to_posture", "name": "Stand"},
         ]
 
-        if state == "OPTIMAL":
+        if self.compact_speech:
+            if state == "OPTIMAL":
+                compact_text = intro
+            else:
+                compact_text = question
+            actions.append({"type": "say", "text": compact_text, "language": "es-ES", "animated": False})
+        elif state == "OPTIMAL":
             actions.extend(
                 [
                     {"type": "say", "text": intro, "language": "es-ES", "animated": True},
@@ -149,12 +161,21 @@ class PedagogicalPlannerNode(Node):
                 [
                     {"type": "say", "text": intro, "language": "es-ES", "animated": True},
                     {"type": "play_animation", "animation_name": cfg["animation"]},
+                ]
+            )
+            for index, text in enumerate(question_texts, start=1):
+                actions.append(
                     {
                         "type": "say",
-                        "text": f"En tu {structure_label}, despues de {operation}, piensa en esto: {question}",
+                        "text": f"Pregunta {index}: {text}",
                         "language": "es-ES",
                         "animated": True,
-                    },
+                    }
+                )
+                if index < len(question_texts):
+                    actions.append({"type": "pause", "seconds": 0.6})
+            actions.extend(
+                [
                     {"type": "pause", "seconds": self.student_pause_sec},
                     {
                         "type": "say",
@@ -208,4 +229,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
