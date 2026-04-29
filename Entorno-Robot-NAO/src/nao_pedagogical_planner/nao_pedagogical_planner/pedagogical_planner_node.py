@@ -62,7 +62,17 @@ def _clean_sentence(text: str, max_chars: int) -> str:
     text = " ".join(str(text or "").split())
     if len(text) <= max_chars:
         return text
-    return text[: max_chars - 1].rstrip() + "..."
+    clipped = text[:max_chars].rstrip()
+    for separator in (". ", "? ", "¿", ", ", "; ", ": "):
+        position = clipped.rfind(separator)
+        if position >= max_chars * 0.55:
+            end = position + 1 if separator in (". ", "? ") else position
+            return clipped[:end].strip()
+    return clipped.rsplit(" ", 1)[0].strip()
+
+
+def _normalize_sentence(text: str) -> str:
+    return " ".join(str(text or "").split())
 
 
 def _question_text(question: Any) -> str:
@@ -81,7 +91,7 @@ class PedagogicalPlannerNode(Node):
         self.declare_parameter("plan_topic", "/nao_pedagogical/plan")
         self.declare_parameter("legacy_plan_topic", "/llm/plan")
         self.declare_parameter("publish_legacy_plan", True)
-        self.declare_parameter("max_question_chars", 180)
+        self.declare_parameter("max_question_chars", 260)
         self.declare_parameter("max_intro_chars", 170)
         self.declare_parameter("student_pause_sec", 1.2)
         self.declare_parameter("compact_speech", False)
@@ -128,14 +138,14 @@ class PedagogicalPlannerNode(Node):
         feedback = _as_dict(event.get("feedback"))
         questions = _as_list(feedback.get("preguntas") or feedback.get("secuencia_preguntas"))
         question = _question_text(questions[0]) if questions else self._fallback_question(event)
-        question_texts = [_clean_sentence(_question_text(item), self.max_question_chars) for item in questions]
+        question_texts = [_normalize_sentence(_question_text(item)) for item in questions]
         question_texts = [text for text in question_texts if text]
         if not question_texts:
-            question_texts = [_clean_sentence(question, self.max_question_chars)]
+            question_texts = [_normalize_sentence(question)]
         concept = str(feedback.get("concepto_clave") or self._concept_from_validation(event))
 
         intro = _clean_sentence(cfg["intro"], self.max_intro_chars)
-        question = _clean_sentence(question, self.max_question_chars)
+        question = _normalize_sentence(question)
         concept = _clean_sentence(concept, 120)
 
         actions: List[Dict[str, Any]] = [
