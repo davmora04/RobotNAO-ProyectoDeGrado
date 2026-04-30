@@ -89,10 +89,6 @@ class SpeechToTextNode(Node):
             return
         self.touch_is_down = True
 
-        if not self.armed_for_student and not self.recording:
-            self.get_logger().info("Ignoring head touch while robot is not waiting for student speech.")
-            return
-
         now = self.get_clock().now().nanoseconds / 1e9
         if now - self.last_touch_time < self.touch_debounce_sec:
             return
