@@ -33,6 +33,8 @@ Robot NAO
 
 - `nao_ds_bridge`: abre un endpoint HTTP y publica eventos normalizados en ROS2.
 - `nao_pedagogical_planner`: transforma errores BET+CLP y feedback socratico en planes de accion.
+- `nao_dialogue_manager`: ejecuta el feedback por turnos, una pregunta a la vez, y responde a intervenciones del estudiante.
+- `nao_speech_to_text`: graba audio entre dos toques de cabeza y publica la transcripcion para el dialogo.
 - `nao_behavior_renderer`: ejecuta planes mediante NAOqi o los simula en modo mock.
 - `nao_robot_bringup`: launch files para levantar todo el entorno.
 
@@ -115,6 +117,48 @@ export ROBOT_FEEDBACK_PORT=8765
 bash run_robot_stack.sh
 ```
 
+### Modo interactivo
+
+Por defecto, `robot_stack.launch.py` activa el modo interactivo:
+
+```bash
+export NAO_INTERACTIVE_DIALOGUE=true
+export NAO_ENABLE_SPEECH_INPUT=true
+ros2 launch nao_robot_bringup robot_stack.launch.py
+```
+
+En este modo, NAO ya no dice las cuatro preguntas de corrido. El flujo es:
+
+1. DS-Visualizer envia el evento pedagogico.
+2. El planner crea una sesion de dialogo en `/nao_dialogue/session`.
+3. `nao_dialogue_manager` hace la primera pregunta.
+4. El estudiante toca la cabeza de NAO para iniciar grabacion y vuelve a tocar para terminar.
+5. `nao_speech_to_text` publica la transcripcion en `/nao_dialogue/student_text`.
+6. El manager responde, aclara o avanza a la siguiente pregunta.
+
+Comandos utiles:
+
+```bash
+# Desactivar modo interactivo y volver al comportamiento anterior
+export NAO_INTERACTIVE_DIALOGUE=false
+
+# Mantener el modo interactivo, pero probar sin microfono
+export NAO_ENABLE_SPEECH_INPUT=false
+ros2 topic pub --once /nao_dialogue/student_text std_msgs/msg/String "{data: 'no entiendo que significa last'}"
+ros2 topic pub --once /nao_dialogue/student_text std_msgs/msg/String "{data: 'continuar'}"
+```
+
+El manager usa `google-genai`. Por defecto intenta usar Vertex AI:
+
+```bash
+export USE_VERTEX_AI=true
+export VERTEX_AI_PROJECT=microservices-459904
+export VERTEX_AI_LOCATION=us-central1
+export GOOGLE_AI_MODEL=gemini-2.5-flash
+```
+
+En modo Vertex AI, las credenciales salen de Google Application Default Credentials. Si Vertex o `google-genai` no estan disponibles, el manager usa un fallback local socratico breve para no bloquear la prueba.
+
 ## Contrato de integracion
 
 Ver [docs/CONTRATO_EVENTO_ROBOT.md](docs/CONTRATO_EVENTO_ROBOT.md).
@@ -159,4 +203,3 @@ Eso mantiene tres ventajas:
 1. El sistema web funciona aunque NAO no este conectado.
 2. El robot se puede probar en modo mock.
 3. La intervencion fisica queda desacoplada de BET+CLP y del agente socratico.
-

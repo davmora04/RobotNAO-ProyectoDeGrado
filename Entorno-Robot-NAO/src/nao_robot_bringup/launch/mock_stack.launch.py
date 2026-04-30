@@ -7,6 +7,7 @@ from launch_ros.actions import Node
 def generate_launch_description():
     bridge_host = LaunchConfiguration("bridge_host")
     bridge_port = LaunchConfiguration("bridge_port")
+    interactive_dialogue = LaunchConfiguration("interactive_dialogue")
 
     return LaunchDescription(
         [
@@ -17,6 +18,10 @@ def generate_launch_description():
             DeclareLaunchArgument(
                 "bridge_port",
                 default_value=EnvironmentVariable("ROBOT_FEEDBACK_PORT", default_value="8765"),
+            ),
+            DeclareLaunchArgument(
+                "interactive_dialogue",
+                default_value=EnvironmentVariable("NAO_INTERACTIVE_DIALOGUE", default_value="true"),
             ),
             Node(
                 package="nao_ds_bridge",
@@ -29,6 +34,13 @@ def generate_launch_description():
                 package="nao_pedagogical_planner",
                 executable="pedagogical_planner_node",
                 name="nao_pedagogical_planner",
+                output="screen",
+                parameters=[{"interactive_dialogue": interactive_dialogue}],
+            ),
+            Node(
+                package="nao_dialogue_manager",
+                executable="dialogue_manager_node",
+                name="nao_dialogue_manager",
                 output="screen",
             ),
             Node(

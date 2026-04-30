@@ -75,6 +75,14 @@ def _normalize_sentence(text: str) -> str:
     return " ".join(str(text or "").split())
 
 
+def _coerce_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value).strip().lower() in ("1", "true", "yes", "y", "on")
+
+
 def _question_text(question: Any) -> str:
     if isinstance(question, dict):
         return str(question.get("pregunta") or question.get("texto") or question.get("question") or "")
@@ -95,19 +103,24 @@ class PedagogicalPlannerNode(Node):
         self.declare_parameter("max_intro_chars", 170)
         self.declare_parameter("student_pause_sec", 1.2)
         self.declare_parameter("compact_speech", False)
+        self.declare_parameter("interactive_dialogue", True)
+        self.declare_parameter("dialogue_topic", "/nao_dialogue/session")
 
         self.event_topic = self.get_parameter("event_topic").get_parameter_value().string_value
         self.plan_topic = self.get_parameter("plan_topic").get_parameter_value().string_value
         self.legacy_plan_topic = self.get_parameter("legacy_plan_topic").get_parameter_value().string_value
-        self.publish_legacy_plan = bool(self.get_parameter("publish_legacy_plan").value)
+        self.publish_legacy_plan = _coerce_bool(self.get_parameter("publish_legacy_plan").value)
         self.max_question_chars = int(self.get_parameter("max_question_chars").value)
         self.max_intro_chars = int(self.get_parameter("max_intro_chars").value)
         self.student_pause_sec = float(self.get_parameter("student_pause_sec").value)
-        self.compact_speech = bool(self.get_parameter("compact_speech").value)
+        self.compact_speech = _coerce_bool(self.get_parameter("compact_speech").value)
+        self.interactive_dialogue = _coerce_bool(self.get_parameter("interactive_dialogue").value)
+        self.dialogue_topic = self.get_parameter("dialogue_topic").get_parameter_value().string_value
 
         self.create_subscription(String, self.event_topic, self._on_event, 10)
         self.pub_plan = self.create_publisher(String, self.plan_topic, 10)
         self.pub_legacy_plan = self.create_publisher(String, self.legacy_plan_topic, 10)
+        self.pub_dialogue = self.create_publisher(String, self.dialogue_topic, 10)
         self.pub_state = self.create_publisher(String, "/interaction/state", 10)
 
         self.get_logger().info(f"Planner ready: {self.event_topic} -> {self.plan_topic}")
@@ -117,6 +130,14 @@ class PedagogicalPlannerNode(Node):
             event = json.loads(msg.data)
             if not isinstance(event, dict):
                 raise ValueError("event is not a JSON object")
+            if self.interactive_dialogue and str(event.get("validation_state") or "").upper() != "OPTIMAL":
+                session = self._build_dialogue_session(event)
+                self.pub_dialogue.publish(String(data=json.dumps(session, ensure_ascii=False)))
+                self.pub_state.publish(String(data="ROBOT_DIALOGUE_READY"))
+                self.get_logger().info(
+                    f"Dialogue session ready for event={event.get('event_id')} questions={len(session.get('questions', []))}"
+                )
+                return
             plan = self._build_plan(event)
             payload = json.dumps(plan, ensure_ascii=False)
             self.pub_plan.publish(String(data=payload))
@@ -128,6 +149,34 @@ class PedagogicalPlannerNode(Node):
             )
         except Exception as exc:
             self.get_logger().error(f"Could not build plan: {exc}")
+
+    def _build_dialogue_session(self, event: Dict[str, Any]) -> Dict[str, Any]:
+        state = str(event.get("validation_state") or "CONCEPT_ERROR").upper()
+        cfg = STATE_CONFIG.get(state, STATE_CONFIG["CONCEPT_ERROR"])
+        feedback = _as_dict(event.get("feedback"))
+        questions = _as_list(feedback.get("preguntas") or feedback.get("secuencia_preguntas"))
+        question_texts = [_normalize_sentence(_question_text(item)) for item in questions]
+        question_texts = [text for text in question_texts if text]
+        if not question_texts:
+            question_texts = [_normalize_sentence(self._fallback_question(event))]
+
+        concept = str(feedback.get("concepto_clave") or self._concept_from_validation(event))
+        return {
+            "session_id": event.get("session_id") or event.get("event_id"),
+            "event_id": event.get("event_id"),
+            "source": "ds_visualizer",
+            "validation_state": state,
+            "structure_type": str(event.get("structure_type") or "desconocida"),
+            "operation": str(event.get("operation") or "la operacion"),
+            "intro": _clean_sentence(cfg["intro"], self.max_intro_chars),
+            "color": cfg["color"],
+            "animation": cfg["animation"],
+            "questions": question_texts,
+            "feedback": feedback,
+            "validation_result": _as_dict(event.get("validation_result")),
+            "context": str(event.get("context") or ""),
+            "concept": _clean_sentence(concept, 120),
+        }
 
     def _build_plan(self, event: Dict[str, Any]) -> Dict[str, Any]:
         state = str(event.get("validation_state") or "CONCEPT_ERROR").upper()
