@@ -41,6 +41,7 @@ class SpeechToTextNode(Node):
         self.declare_parameter("language", "es")
         self.declare_parameter("touch_debounce_sec", 0.9)
         self.declare_parameter("min_recording_sec", 1.0)
+        self.declare_parameter("touch_button", 2)
 
         self.audio_topic = self.get_parameter("audio_topic").get_parameter_value().string_value
         self.head_touch_topic = self.get_parameter("head_touch_topic").get_parameter_value().string_value
@@ -50,6 +51,7 @@ class SpeechToTextNode(Node):
         self.language = self.get_parameter("language").get_parameter_value().string_value
         self.touch_debounce_sec = float(self.get_parameter("touch_debounce_sec").value)
         self.min_recording_sec = float(self.get_parameter("min_recording_sec").value)
+        self.touch_button = int(self.get_parameter("touch_button").value)
 
         self.recording = False
         self.audio_buffer = bytearray()
@@ -65,6 +67,7 @@ class SpeechToTextNode(Node):
         self.armed_for_student = False
         self.waiting_for_plan_done = False
         self.touch_is_down = False
+        self.active_touch_button = 0
 
         if AudioBuffer is None or HeadTouch is None:
             self.get_logger().error("naoqi_bridge_msgs is not available; speech node cannot subscribe to NAO audio.")
@@ -82,12 +85,18 @@ class SpeechToTextNode(Node):
 
     def _on_touch(self, msg: Any) -> None:
         state = getattr(msg, "state", 0)
+        button = int(getattr(msg, "button", 0))
+        if button != self.touch_button:
+            return
         if state != 1:
-            self.touch_is_down = False
+            if self.active_touch_button == button:
+                self.touch_is_down = False
+                self.active_touch_button = 0
             return
         if self.touch_is_down:
             return
         self.touch_is_down = True
+        self.active_touch_button = button
 
         now = self.get_clock().now().nanoseconds / 1e9
         if now - self.last_touch_time < self.touch_debounce_sec:

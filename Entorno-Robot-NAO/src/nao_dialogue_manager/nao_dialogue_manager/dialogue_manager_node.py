@@ -193,9 +193,7 @@ class DialogueManagerNode(Node):
         robot_text = _clean(reply.get("respuesta_robot"), 320) or self._fallback_reply(text)
 
         self.history.append({"student": text, "robot": robot_text})
-        should_advance = bool(reply.get("avanzar_siguiente_pregunta"))
-        if self.turns_for_current_question >= self.max_turns_per_question and not self._is_confusion(lower):
-            should_advance = True
+        should_advance = False
 
         actions: List[Dict[str, Any]] = [
             {
@@ -349,14 +347,18 @@ class DialogueManagerNode(Node):
             "feedback": self.session.get("feedback"),
             "validation_result": self.session.get("validation_result"),
             "student_text": student_text,
+            "student_intent": self._student_intent(student_text),
             "short_history": self.history[-4:],
         }
         system = (
             "Eres NAO como tutor socratico de estructuras de datos. "
-            "Responde en espanol, breve y conversacional, maximo 35 palabras en respuesta_robot. "
-            "No des codigo ni la solucion directa. "
-            "Si el estudiante pregunta algo, aclara el concepto con una pregunta guia. "
-            "Solo permite avanzar cuando el estudiante lo pide claramente o muestra comprension suficiente. "
+            "Responde en espanol, breve y conversacional, maximo 45 palabras en respuesta_robot. "
+            "No des codigo ni la correccion exacta del bug. "
+            "Si student_intent es necesita_explicacion, da primero una explicacion conceptual corta y luego una pregunta guia. "
+            "Si student_intent es fuera_de_tema, redirige amablemente al tema actual. "
+            "Si student_intent es intento_respuesta, conecta su idea con la pregunta actual. "
+            "Usa siempre structure_type, operation, feedback, validation_result, concept y current_question como contexto principal. "
+            "No avances de pregunta desde el JSON; avanzar_siguiente_pregunta siempre debe ser false. "
             "Devuelve solo JSON compacto de una linea con estas claves exactas: "
             "respuesta_robot, avanzar_siguiente_pregunta, tipo_intervencion, color, animacion. "
             "No uses saltos de linea dentro de strings. No uses comillas dobles dentro de respuesta_robot. "
@@ -426,7 +428,7 @@ class DialogueManagerNode(Node):
 
         return {
             "respuesta_robot": _clean(data.get("respuesta_robot"), 320),
-            "avanzar_siguiente_pregunta": bool(data.get("avanzar_siguiente_pregunta", False)),
+            "avanzar_siguiente_pregunta": False,
             "tipo_intervencion": str(data.get("tipo_intervencion") or "aclaracion"),
             "color": color,
             "animacion": animation,
@@ -437,13 +439,12 @@ class DialogueManagerNode(Node):
         reply = self._extract_json_string_value(text, "respuesta_robot")
         if not reply:
             return {}
-        advance_match = re.search(r'"avanzar_siguiente_pregunta"\s*:\s*(true|false)', text, re.IGNORECASE)
         color = self._extract_json_string_value(text, "color") or "blue"
         intervention = self._extract_json_string_value(text, "tipo_intervencion") or "aclaracion"
         animation = self._extract_json_string_value(text, "animacion") or "Stand/Gestures/Explain_1"
         return {
             "respuesta_robot": reply,
-            "avanzar_siguiente_pregunta": bool(advance_match and advance_match.group(1).lower() == "true"),
+            "avanzar_siguiente_pregunta": False,
             "tipo_intervencion": intervention,
             "color": color,
             "animacion": animation,
@@ -452,9 +453,16 @@ class DialogueManagerNode(Node):
     def _extract_json_string_value(self, text: str, key: str) -> str:
         pattern = rf'"{re.escape(key)}"\s*:\s*"(?P<value>.*?)(?:"\s*,\s*"[^"]+"\s*:|"\s*}})'
         match = re.search(pattern, text, re.DOTALL)
-        if not match:
+        if match:
+            value = match.group("value")
+            value = re.sub(r'"\s*,\s*$', "", value)
+            return _clean(value.replace('\\"', '"'), 320)
+
+        partial_pattern = rf'"{re.escape(key)}"\s*:\s*"(?P<value>.*)$'
+        partial_match = re.search(partial_pattern, text, re.DOTALL)
+        if not partial_match:
             return ""
-        value = match.group("value")
+        value = partial_match.group("value")
         value = re.sub(r'"\s*,\s*$', "", value)
         return _clean(value.replace('\\"', '"'), 320)
 
@@ -464,8 +472,8 @@ class DialogueManagerNode(Node):
         question = questions[self.question_index]
         concept = _clean(self.session.get("concept"), 120)
         text = student_text.lower()
-        if self._is_confusion(text):
-            return f"Vamos por partes. Para esta pregunta, piensa primero en la propiedad que debe conservarse: {concept}. Que dato de la estructura podrias revisar para comprobarlo?"
+        if self._student_intent(student_text) == "necesita_explicacion":
+            return self._conceptual_explanation(question, concept)
         if "por que" in text or "por qué" in text:
             return "Buena pregunta. El punto es conectar el resultado visible con el invariante. En tus palabras, que tendria que cumplirse para que esto fuera correcto?"
         return f"Te escucho. Relaciona tu idea con esta pregunta: {question} Que evidencia de la estructura te ayudaria a confirmarlo?"
@@ -478,6 +486,57 @@ class DialogueManagerNode(Node):
 
     def _is_confusion(self, text: str) -> bool:
         return any(key in text for key in ("no entiendo", "no se", "no sé", "explicame", "explícame", "que significa", "qué significa"))
+
+    def _student_intent(self, student_text: str) -> str:
+        text = student_text.lower()
+        if self._is_confusion(text) or any(
+            key in text
+            for key in (
+                "dime tu",
+                "dime tú",
+                "dame la respuesta",
+                "dame una pista",
+                "ayudame",
+                "ayúdame",
+                "me podria decir",
+                "me podría decir",
+                "me podrias decir",
+                "me podrías decir",
+                "podrias decir",
+                "podrías decir",
+                "explica",
+                "explique",
+                "tampoco",
+            )
+        ):
+            return "necesita_explicacion"
+        if any(key in text for key in ("campeon", "campeón", "inglaterra", "futbol", "fútbol")):
+            return "fuera_de_tema"
+        return "intento_respuesta"
+
+    def _conceptual_explanation(self, question: str, concept: str) -> str:
+        assert self.session is not None
+        structure = str(self.session.get("structure_type") or "").lower()
+        operation = str(self.session.get("operation") or "").lower()
+        joined = f"{structure} {question} {concept} {operation}".lower()
+
+        if "grafo" in joined:
+            return "En un grafo importa que los vertices y arcos esperados queden en la representacion correcta. Revisa adyacencias, direccion y pesos si aplican. Que conexion falla?"
+        if "rbt" in joined or "rojo" in joined or "red black" in joined:
+            return "En un arbol rojo negro no basta insertar: tambien deben conservarse colores, raiz negra y balance. Que propiedad roja-negra muestra el error?"
+        if "bst" in joined or "binario" in joined or "inorder" in joined:
+            return "En un BST, el recorrido inorder debe salir ordenado si los enlaces izquierda y derecha respetan la regla. Que nodo rompe ese orden?"
+        if "doble" in joined:
+            return "En una lista doble, cada enlace next debe corresponder con un prev de vuelta. Si insertas o eliminas, que par de punteros deberia quedar simetrico?"
+        if "puntero" in joined or "pointer" in joined:
+            return "Un puntero es una referencia: next conecta un nodo con el siguiente y last guarda acceso al ultimo. En add_last, que referencias deberian cambiar?"
+        if "size" in joined:
+            return "Size representa cuantos nodos hay en la lista. Despues de insertar al final, deberia aumentar en uno. Como comprobarias que coincide con el recorrido?"
+        if "add_last" in joined or "last" in joined or "cola" in joined:
+            return "En add_last, el nodo nuevo debe quedar al final: el antiguo last apunta al nuevo y luego last pasa a ser el nuevo. Que parte revisarias?"
+        if concept:
+            return f"La idea clave es {concept}. Primero identifica que propiedad debe conservarse y luego compara lo esperado con lo obtenido. Que dato puedes revisar?"
+        return "Vamos por partes. Primero mira que deberia cambiar en la estructura y que deberia permanecer igual. Que evidencia concreta puedes revisar?"
 
     def _publish_plan(self, actions: List[Dict[str, Any]], state: str) -> None:
         plan = {
