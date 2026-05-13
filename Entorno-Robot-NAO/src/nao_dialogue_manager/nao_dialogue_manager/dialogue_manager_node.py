@@ -348,13 +348,15 @@ class DialogueManagerNode(Node):
             "validation_result": self.session.get("validation_result"),
             "student_text": student_text,
             "student_intent": self._student_intent(student_text),
+            "direct_answer_allowed": self._should_give_direct_answer(student_text),
             "short_history": self.history[-4:],
         }
         system = (
             "Eres NAO como tutor socratico de estructuras de datos. "
             "Responde en espanol, breve y conversacional, maximo 45 palabras en respuesta_robot. "
-            "No des codigo ni la correccion exacta del bug. "
+            "No des codigo completo ni escribas la implementacion. "
             "Si student_intent es necesita_explicacion, da primero una explicacion conceptual corta y luego una pregunta guia. "
+            "Si student_intent es pide_respuesta_directa o direct_answer_allowed es true, da la respuesta conceptual directa y pedagogica: explica que propiedad, puntero o invariante debe corregirse, sin codigo. "
             "Si student_intent es fuera_de_tema, redirige amablemente al tema actual. "
             "Si student_intent es intento_respuesta, conecta su idea con la pregunta actual. "
             "Usa siempre structure_type, operation, feedback, validation_result, concept y current_question como contexto principal. "
@@ -458,13 +460,7 @@ class DialogueManagerNode(Node):
             value = re.sub(r'"\s*,\s*$', "", value)
             return _clean(value.replace('\\"', '"'), 320)
 
-        partial_pattern = rf'"{re.escape(key)}"\s*:\s*"(?P<value>.*)$'
-        partial_match = re.search(partial_pattern, text, re.DOTALL)
-        if not partial_match:
-            return ""
-        value = partial_match.group("value")
-        value = re.sub(r'"\s*,\s*$', "", value)
-        return _clean(value.replace('\\"', '"'), 320)
+        return ""
 
     def _fallback_reply(self, student_text: str) -> str:
         assert self.session is not None
@@ -472,6 +468,8 @@ class DialogueManagerNode(Node):
         question = questions[self.question_index]
         concept = _clean(self.session.get("concept"), 120)
         text = student_text.lower()
+        if self._should_give_direct_answer(student_text):
+            return self._direct_pedagogical_answer(question, concept)
         if self._student_intent(student_text) == "necesita_explicacion":
             return self._conceptual_explanation(question, concept)
         if "por que" in text or "por qué" in text:
@@ -487,8 +485,41 @@ class DialogueManagerNode(Node):
     def _is_confusion(self, text: str) -> bool:
         return any(key in text for key in ("no entiendo", "no se", "no sé", "explicame", "explícame", "que significa", "qué significa"))
 
+    def _is_direct_answer_request(self, text: str) -> bool:
+        return any(
+            key in text
+            for key in (
+                "dame la respuesta",
+                "dime la respuesta",
+                "dime tu la respuesta",
+                "dime tú la respuesta",
+                "tu dime",
+                "tú dime",
+                "dime tu",
+                "dime tú",
+                "no lo se tu dime",
+                "no lo sé tú dime",
+                "no lo se, tu dime",
+                "no lo sé, tú dime",
+                "que no se actualiza",
+                "qué no se actualiza",
+                "cuales no se actualizan",
+                "cuáles no se actualizan",
+            )
+        )
+
+    def _should_give_direct_answer(self, student_text: str) -> bool:
+        text = student_text.lower()
+        if self._is_direct_answer_request(text):
+            return True
+        if self.turns_for_current_question >= 2 and self._is_confusion(text):
+            return True
+        return False
+
     def _student_intent(self, student_text: str) -> str:
         text = student_text.lower()
+        if self._should_give_direct_answer(student_text):
+            return "pide_respuesta_directa"
         if self._is_confusion(text) or any(
             key in text
             for key in (
@@ -537,6 +568,30 @@ class DialogueManagerNode(Node):
         if concept:
             return f"La idea clave es {concept}. Primero identifica que propiedad debe conservarse y luego compara lo esperado con lo obtenido. Que dato puedes revisar?"
         return "Vamos por partes. Primero mira que deberia cambiar en la estructura y que deberia permanecer igual. Que evidencia concreta puedes revisar?"
+
+    def _direct_pedagogical_answer(self, question: str, concept: str) -> str:
+        assert self.session is not None
+        structure = str(self.session.get("structure_type") or "").lower()
+        operation = str(self.session.get("operation") or "").lower()
+        joined = f"{structure} {operation} {question} {concept}".lower()
+
+        if "add_last" in joined or "last" in joined or "cola" in joined:
+            return "La respuesta es: al hacer add_last, el nodo que antes era last debe apuntar con next al nuevo nodo, y luego last debe apuntar al nuevo nodo. Despues verifica que size aumente en uno."
+        if "add_first" in joined or "first" in joined:
+            return "La respuesta es: al hacer add_first, el nuevo nodo debe apuntar con next al antiguo first, y luego first debe apuntar al nuevo nodo. Si la lista estaba vacia, last tambien debe quedar en ese nodo."
+        if "doble" in joined or "prev" in joined:
+            return "La respuesta es: en una lista doble debes actualizar ambos sentidos. El next del nodo anterior y el prev del nodo siguiente deben quedar consistentes con el nodo insertado o eliminado."
+        if "rbt" in joined or "rojo" in joined or "red black" in joined:
+            return "La respuesta es: ademas de insertar como BST, debes restaurar las reglas rojo-negras: raiz negra, ningun rojo con hijo rojo y misma altura negra en los caminos."
+        if "bst" in joined or "binario" in joined or "inorder" in joined:
+            return "La respuesta es: cada nodo del subarbol izquierdo debe tener clave menor y cada nodo del derecho clave mayor. Si el inorder no queda ordenado, algun enlace izquierda o derecha fue elegido mal."
+        if "grafo" in joined:
+            return "La respuesta es: verifica que el vertice o arco esperado exista en la lista de adyacencia correcta, con direccion y peso correctos si aplican."
+        if "size" in joined:
+            return "La respuesta es: size debe coincidir con el numero de nodos alcanzables desde la estructura. Despues de insertar aumenta en uno; despues de eliminar disminuye en uno."
+        if concept:
+            return f"La respuesta conceptual es esta: debes preservar {concept}. Compara el estado esperado contra el obtenido y corrige la parte de la operacion que rompe ese invariante."
+        return "La respuesta conceptual es: identifica el invariante que falla, mira que puntero o relacion lo rompe, y corrige esa actualizacion antes de volver a validar."
 
     def _publish_plan(self, actions: List[Dict[str, Any]], state: str) -> None:
         plan = {
