@@ -64,6 +64,7 @@ class DialogueManagerNode(Node):
         self.declare_parameter("vertex_location", os.getenv("VERTEX_AI_LOCATION", "us-central1"))
         self.declare_parameter("google_ai_model", os.getenv("GOOGLE_AI_MODEL", "gemini-2.5-flash"))
         self.declare_parameter("google_ai_api_key", os.getenv("GOOGLE_AI_API_KEY", os.getenv("GEMINI_API_KEY", "")))
+        self.declare_parameter("max_output_tokens", int(os.getenv("NAO_DIALOGUE_MAX_OUTPUT_TOKENS", "2048")))
         self.declare_parameter("timeout_sec", 35.0)
         self.declare_parameter("max_turns_per_question", 2)
         self.declare_parameter("use_llm", _env_bool("NAO_DIALOGUE_USE_LLM", True))
@@ -76,6 +77,7 @@ class DialogueManagerNode(Node):
         self.vertex_location = self.get_parameter("vertex_location").get_parameter_value().string_value
         self.google_ai_model = self.get_parameter("google_ai_model").get_parameter_value().string_value
         self.google_ai_api_key = self.get_parameter("google_ai_api_key").get_parameter_value().string_value
+        self.max_output_tokens = int(self.get_parameter("max_output_tokens").value)
         self.timeout_sec = float(self.get_parameter("timeout_sec").value)
         self.max_turns_per_question = int(self.get_parameter("max_turns_per_question").value)
         self.use_llm = _coerce_bool(self.get_parameter("use_llm").value)
@@ -376,14 +378,36 @@ class DialogueManagerNode(Node):
             config=types.GenerateContentConfig(
                 system_instruction=system,
                 temperature=0.25,
-                max_output_tokens=900,
+                max_output_tokens=self.max_output_tokens,
                 response_mime_type="application/json",
             ),
         )
         text = response.text or ""
         if not text:
             raise RuntimeError("empty Gemini response")
-        return self._parse_llm_json(text)
+        try:
+            return self._parse_llm_json(text)
+        except json.JSONDecodeError as exc:
+            self.get_logger().warning(f"Gemini JSON parse failed; retrying with stricter prompt before fallback: {exc}")
+            retry_response = self.genai_client.models.generate_content(
+                model=self.google_ai_model,
+                contents=(
+                    json.dumps(payload_context, ensure_ascii=False)
+                    + "\n\nGenera de nuevo la respuesta. Devuelve solo JSON valido en una sola linea. "
+                    + "Usa exactamente estas claves: respuesta_robot, avanzar_siguiente_pregunta, tipo_intervencion, color, animacion. "
+                    + "respuesta_robot debe tener maximo 35 palabras, sin markdown, sin comillas dobles internas y sin saltos de linea."
+                ),
+                config=types.GenerateContentConfig(
+                    system_instruction=system,
+                    temperature=0.0,
+                    max_output_tokens=max(self.max_output_tokens, 2048),
+                    response_mime_type="application/json",
+                ),
+            )
+            retry_text = retry_response.text or ""
+            if not retry_text:
+                raise RuntimeError("empty Gemini retry response")
+            return self._parse_llm_json(retry_text)
 
     def _parse_llm_json(self, text: str) -> Dict[str, Any]:
         raw_text = text
